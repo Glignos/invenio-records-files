@@ -99,3 +99,57 @@ def file_download_ui(pid, record, _record_file_factory=None, **kwargs):
         },
         as_attachment=('download' in request.args)
     )
+
+
+def flush_record_metadata_with_new_file(obj_uuid, **kwargs):
+    from invenio_records_files.models import RecordsBuckets
+    from invenio_records.models import RecordMetadata
+    from invenio_db import db
+    from sqlalchemy.orm.attributes import flag_modified
+
+    # Expire all previous DB objects from the session to fetch the latest ones.
+    db.session.expire_all()
+    # Locking the DB object to guarantee the validity
+    # of the following operation
+    obj = ObjectVersion.query.filter_by(id=obj_uuid).with_for_update().one()
+    if not obj.is_head:
+        return False
+    record_bucket =\
+        RecordsBuckets.query.filter_by(bucket_id=obj.bucket_id).first()
+
+    record = RecordMetadata.query.filter_by(
+        id=record_bucket.record_id).with_for_update().one()
+    keys_to_copy = ['key', 'version_id', 'bucket_id', 'file_id']
+    object_version_metadata =\
+        {each: getattr(obj, each) for each in keys_to_copy if getattr(obj, each, '')}
+
+    if obj.file_id:
+        file_ = obj.file
+        keys_to_copy = ['checksum', 'size']
+        file_metadata =\
+            {each: getattr(file_, each) for each in keys_to_copy if getattr(
+                file_, each, '')}
+    else:
+        file_metadata = {}
+
+    new_metadata_dict = dict(object_version_metadata, **file_metadata)
+
+    keys_to_be_translated = [('bucket_id', 'bucket')]
+    for each in keys_to_be_translated:
+        new_metadata_dict[each[1]] = new_metadata_dict.pop(each[0])
+
+    is_update = False
+
+    if '_files' in record.json:
+        for existing_metadata_object in record.json['_files']:
+            if existing_metadata_object['key'] == obj.key:
+                is_update = True
+                existing_metadata_object = new_metadata_dict
+        if not is_update:
+            record.json['_files'].append(new_metadata_dict)
+    else:
+        record.json.update({'_files': [new_metadata_dict]})
+    flag_modified(record, 'json')
+    db.session.merge(record)
+    db.session.commit()
+    return True

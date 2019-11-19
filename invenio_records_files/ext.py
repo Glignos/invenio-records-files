@@ -11,8 +11,10 @@
 
 from __future__ import absolute_import, print_function
 
-from invenio_records_files import config
+from invenio_files_rest.signals import file_deleted, file_uploaded
 
+from invenio_records_files import config
+from invenio_records_files.utils import flush_record_metadata_with_new_file
 
 class InvenioRecordsFiles(object):
     """Invenio-Records-Files extension."""
@@ -25,6 +27,7 @@ class InvenioRecordsFiles(object):
     def init_app(self, app):
         """Flask application initialization."""
         self.init_config(app)
+        self.register_signals(app)
         app.extensions['invenio-records-files'] = self
 
     def init_config(self, app):
@@ -32,3 +35,9 @@ class InvenioRecordsFiles(object):
         for k in dir(config):
             if k.startswith('RECORDS_FILES_'):
                 app.config.setdefault(k, getattr(config, k))
+
+    @staticmethod
+    def register_signals(app):
+        """Register Files REST signals."""
+        file_deleted.connect(flush_record_metadata_with_new_file, weak=False)
+        file_uploaded.connect(flush_record_metadata_with_new_file, weak=False)
